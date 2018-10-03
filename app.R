@@ -101,32 +101,42 @@ limpiar <- function(df.tot) {
   return(df.tot)
 }
 
-##------------------------FUNCION que devuelve las urls de todos los box scores de un día-----------------------
-f.geturlsbox <- function(i.month,i.day,i.year) {
+f.geturlsbox <- function(i.month,i.day,i.year,i.int) {
+  d.dat <- as.Date(paste(i.year,i.month,i.day,sep="-"))
+  print(d.dat)
+  print(d.dat-as.integer(i.int))
+  s.days <- seq(d.dat-as.integer(i.int),d.dat,by=1)
   
-  url <- paste("https://www.basketball-reference.com/boxscores/?month=",i.month,"&day=",i.day,"&year=",i.year,sep="")
-  print(url)
-  # url <- s.url
-  html <- paste(readLines(url), collapse="\n")
-  library(stringr)
-  matched <- str_match_all(html, "<a href=\"(.*?)\"")
   
-  a <- matched[[1]]
+  f.geturls <- function(s.days){
+    l.days <- strsplit(as.character(s.days),"-")
+    il.month <- as.integer(l.days[[1]][2])
+    il.day <- as.integer(l.days[[1]][3])
+    il.year <- as.integer(l.days[[1]][1])
+    url <- paste("https://www.basketball-reference.com/boxscores/?month=",il.month,"&day=",il.day,"&year=",il.year,sep="")
+    print(url)
+    # url <- s.url
+    html <- paste(readLines(url), collapse="\n")
+    library(stringr)
+    matched <- str_match_all(html, "<a href=\"(.*?)\"")
+    
+    a <- matched[[1]]
+    
+    a2 <- a[grep("boxscores/2",a)]
+    
+    indhref <- grep("<a",a2)
+    
+    a3 <- a2[-indhref]
+    
+    a.urls <- paste("https://www.basketball-reference.com",a3,sep="")
+    return(a.urls)
+  }
+  l.urls <- lapply(s.days,f.geturls)
+  l.urls <- unlist(l.urls)
+  return(l.urls)
   
-  ind <- grep("boxscores/2",a)
-  
-  a2 <- a[ind]
-  
-  indhref <- grep("<a",a2)
-  
-  a3 <- a2[-indhref]
-  
-  a.urls <- paste("https://www.basketball-reference.com",a3,sep="")
-  return(a.urls)
 }
-##------------------------FUNCION------------------------------------------------------------------------------------
 
-##------------------------FUNCION crea una lista con todos los boxscores de un array de urls--------------
 f.listdfs <- function(a.urls){
   l.dfs_tot <- list()
   for (i in 1:length(a.urls)) {
@@ -134,12 +144,13 @@ f.listdfs <- function(a.urls){
     l.dfs <- readHTMLTable(getURL(s.url))
     l.dfs <- l.dfs[c(1,3)]
     l.dfs_tot <- c(l.dfs_tot,l.dfs)
-    print(paste(i,"box score agregado",sep=" "))
+    print(paste(i,"/",length(a.urls)," box scores agregados",sep=""))
   }
   return(l.dfs_tot)
 }
-##----------------------------------------------------------------------------------------------------------
-##------------------------FUNCION que limpia los boxscores de una lista de boxscores----------------------------
+
+##----------------------XXX------------------------------------------------------------------------------------------------
+
 f.limpbs <- function(l.bs){
   dfbs2.1 <- as.data.frame(l.bs)
   dfbs2.1 <- dfbs2.1[,1:20]
@@ -182,24 +193,45 @@ f.limpbs <- function(l.bs){
   
   return(dfbs2.1)
 }
-##------------------------FUNCION----------------------------------------------------------------------------------
-##------------------------FUNCION CON TODO------------------------------------------------------------------
-f.urltobs <- function(a.month,a.day,a.year){
+
+##----------------------XXX------------------------------------------------------------------------------------------------
+f.urltobs <- function(a.month,a.day,a.year,a.int){
   withProgress(message = 'Descargando datos', value = 0,{
-    incProgress(0.0,detail="Estableciendo partidos")
-  a.urls <- f.geturlsbox(a.month,a.day,a.year)
-  incProgress(0.25,detail="Descargando partidos")
-  l.dfs <- f.listdfs(a.urls)
-  incProgress(0.25,detail="Limpiando partidos")
-  l.limp <- lapply(l.dfs,f.limpbs)
-  incProgress(0.25,detail="Combinando partidos")
-  df.unid <- rbind.fill(l.limp)
-  df.unid <- df.unid[rev(order(df.unid$FPPM)),]
-  df.unid <- subset(df.unid,df.unid$MP>4)
-  return(df.unid)})
+    incProgress(0.2,detail="Estableciendo partidos")
+  l.boxscores <- f.geturlsbox(a.month,a.day,a.year,a.int)
+  incProgress(0.2,detail=paste("Recolectando",length(l.boxscores),"Box Scores",sep=" "))
+  df.boxscores <- f.listdfs(l.boxscores)
+  incProgress(0.2,detail="limpiando boxscores")
+  l.limp <- lapply(df.boxscores,f.limpbs)
+  df.unid <<- rbind.fill(l.limp)
+  
+  incProgress(0.2,detail="organizando boxscores")
+  df.group <- df.unid %>% group_by(Player) %>% summarise_all(
+    funs(if(is.numeric(.)) {sum(.)} else {paste(as.character(.),collapse=", ")} ))
+  
+  print(head(df.group,2))
+  print(tail(df.group,2))
+  
+  df.group <- df.group[,1:22]
+  df.group$GP <- count(df.unid,"Player")[,2]
+  df.group$MP <- as.integer(df.group$MP)
+  df.group$MPPG <- df.group$MP/df.group$GP
+  df.group <- subset(df.group,df.group$MPPG>=5)
+  df.group$FG. <- df.group$FG/df.group$FGA
+  df.group$T3P. <- df.group$T3P/df.group$T3PA
+  df.group$FT. <- df.group$FT/df.group$FTA
+  df.group$FP=df.group$AST*2+df.group$ORB*1.5+df.group$DRB+df.group$BLK*2+df.group$STL*2+df.group$FT*1.5+
+    df.group$T2P*2.5+df.group$T3P*3.5-df.group$FTA*0.5-df.group$T2PA*0.5-df.group$T3PA*0.5-
+    df.group$TOV*2
+  df.group$FPPG <- df.group$FP/df.group$GP
+  df.group$FPPM <- df.group$FP/df.group$MP
+  df.group <- df.group[rev(order(df.group$FPPM)),]
+  print("procesado")
+  print(head(df.group,2))
+  print(tail(df.group,2))
+  })
+  return(df.group)
 }
-
-
 
 ##----------------------------------------------------------------------------------------------------------
 
@@ -223,12 +255,16 @@ ui <- fluidPage(
                          fluidRow(column(5,h3("Destacados del día"))),
                          fluidRow(column(1,selectInput("i.selectinput.dia",h4("Día"),choices=as.character(c(1:31)),selected="1",width="70px")),
                                   column(1,selectInput("i.selectinput.mes",h4("Mes"),choices=as.character(c(1:12)),selected="1",width="70px")),
-                                  column(2,selectInput("i.selectinput.ano",h4("Año"),choices=as.character(c(2016,2017)),selected="2017",width="90px")),
+                                  column(1,selectInput("i.selectinput.ano",h4("Año"),choices=as.character(c(2016,2017)),selected="2017",width="90px")),
+                                  column(2,selectInput("i.selectinput.lapso",h4("Lapso"),choices=as.character(c(0:15)),selected="0",width="70px")),
                                   column(1,br(),br(),actionButton("i.actionbutton.hoy"," Anoche",icon("calendar-check-o"),
                                                                   style="color: #fff; background-color: #337ab7; border-color: #2e6da4")),
                                   column(2,br(),br(),actionButton("i.actionbutton.descargarhoy"," Bajar Datos",icon("download"),
                                                         style="color: #fff; background-color: #337ab7; border-color: #2e6da4")),
-                                  column(2,selectInput("i.selectinput.ord_destacados",h4("Ordenar por"),choices=c("FPPM","Desv"),selected="FPPM"))),
+                                  column(2,selectInput("i.selectinput.ord_destacados",h4("Ordenar por"),choices=c("FPPM","Desv","FPPG"),selected="FPPM"))
+                                  ),
+                         fluidRow(column(2,numericInput("i.numericinput.partidosjugados",value=1,min=1,"",width="70px")),
+                                  column(4,sliderInput("i.sliderinput.minutosjugados", "",min = 0, max = 48,step=5, value = c(1, 48)))),
                          fluidRow(column(12,h4("Generales"))),
                          fluidRow(column(12,tableOutput("o.tableoutput.destacados"))),
                          fluidRow(column(12,h4("Guards"))),
@@ -339,20 +375,24 @@ server <- function(input,output,session) {
   
   #Botón que trigerea la descarga de datos de anoche
   l.datosdia <- eventReactive(input$i.actionbutton.descargarhoy,{
-    data <- f.urltobs(input$i.selectinput.mes,input$i.selectinput.dia,input$i.selectinput.ano)
+    data <- f.urltobs(input$i.selectinput.mes,input$i.selectinput.dia,input$i.selectinput.ano,input$i.selectinput.lapso)
     df.merge <- df.Tablatot[,c(1,3,32,4)]
     colnames(df.merge) <- c("Player","Pos","FPPM.temp","Tm")
     data <- merge(data,df.merge,by.x="Player",by.y="Player",sort=F)
     data$Desv <- data$FPPM-data$FPPM.temp
-    data <- data[,c(1,27,25,2:22,28,23,24)]
+    data <- data[,c(1,30,28,23,2:5,21,22,6:20,24,25,26,29,27,31)]
+    #data <- data[,c(1,27,25,2:22,28,23,24)]
     data$MP <- as.integer(round(data$MP,0))
     
-    for (i in c(5,6,8,9,11,12,14:24)){
+    for (i in c(6,7,9,10,11,12,14,15,17:26)){
       data[,i] <- as.integer(data[,i])
     }
     
-    data <- data[,c(1:7,8:22,25,26,27)]
+    # data <- data[,c(1:7,8:22,25,26,27)]
     
+    print("PASO DOOOOOS")
+    print(head(data,2))
+    print(tail(data,2))
     return(data)
   })
   
@@ -403,6 +443,9 @@ server <- function(input,output,session) {
     data <- l.datosdia()
     loc <- which(colnames(data)==input$i.selectinput.ord_destacados)
     data <- data[rev(order(c(data[,loc]))),]
+    data <- subset(data,data$GP>=input$i.numericinput.partidosjugados)
+    data <- subset(data,data$MPPG>=input$i.sliderinput.minutosjugados[1])
+    data <- subset(data,data$MPPG<=input$i.sliderinput.minutosjugados[2])
     data[1:10,]
   })
   
@@ -412,7 +455,8 @@ server <- function(input,output,session) {
     data <- data[grep("G",data$Pos),]
     loc <- which(colnames(data)==input$i.selectinput.ord_destacados)
     data <- data[rev(order(c(data[,loc]))),]
-    data[1:5,]
+    data <- subset(data,data$GP>=input$i.numericinput.partidosjugados)
+    data[1:10,]
   })
   
   #destacadosF
@@ -421,6 +465,7 @@ server <- function(input,output,session) {
     data <- data[grep("F",data$Pos),]
     loc <- which(colnames(data)==input$i.selectinput.ord_destacados)
     data <- data[rev(order(c(data[,loc]))),]
+    data <- subset(data,data$GP>=input$i.numericinput.partidosjugados)
     data[1:5,]
     
   })
@@ -431,6 +476,7 @@ server <- function(input,output,session) {
     data <- data[grep("C",data$Pos),]
     loc <- which(colnames(data)==input$i.selectinput.ord_destacados)
     data <- data[rev(order(c(data[,loc]))),]
+    data <- subset(data,data$GP>=input$i.numericinput.partidosjugados)
     data[1:5,]
     
   })
@@ -470,6 +516,9 @@ server <- function(input,output,session) {
       df.jug2[3,]<- apply(df.TablatotPM_red[,8:28],2,min)
       df.jug2 <- df.jug2[c(2,3,1),]
       df.jug3 <- df.jug2[,-c(3,6,9,12)]
+      df.jug3$FP <- NULL
+      df.jug3$TRB <- NULL
+      df.jug3$PTS <- NULL
 
       # radarchart(df.jug3,pfcol = rgb(0/255,43/255,92/255,0.5),
       #            pcol=rgb(180/255,151/255,90/255,1),plwd=2)          0,191,255
